@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Smart Weather Planner - Hava durumu, harita ve AI önerileri">
+    <title>Smart Weather Planner</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="theme-dark weather-default">
+
+<div class="app-wrapper">
+
+    <!-- ═══════════ SOL SIDEBAR ═══════════ -->
+    <aside class="github-sidebar">
+
+        <div class="gh-header">
+            <svg class="gh-octocat" viewBox="0 0 16 16" fill="currentColor" width="20" height="20">
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+                0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15
+                -.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51
+                -1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12
+                0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82
+                2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95
+                .29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8
+                c0-4.42-3.58-8-8-8z"/>
+            </svg>
+            <span class="gh-title">GitHub</span>
+        </div>
+
+        <div class="gh-widget">
+            <div class="gh-widget-icon">🔧</div>
+            <div class="gh-widget-content">
+                <div class="gh-widget-label" data-i18n="ghBuildLabel">Build Status</div>
+                <div class="gh-widget-value passing">
+                    <span class="status-dot"></span>
+                    <span data-i18n="ghPassing">Passing</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="gh-widget">
+            <div class="gh-widget-icon">⭐</div>
+            <div class="gh-widget-content">
+                <div class="gh-widget-label" data-i18n="ghStarsLabel">Stars</div>
+                <div class="gh-widget-value" id="gh-stars-count">—</div>
+            </div>
+        </div>
+
+        <div class="gh-widget">
+            <div class="gh-widget-icon">👥</div>
+            <div class="gh-widget-content">
+                <div class="gh-widget-label" data-i18n="ghContribLabel">Contributors</div>
+                <div class="gh-widget-value" id="gh-contrib-count">—</div>
+            </div>
+        </div>
+
+        <div class="gh-widget">
+            <div class="gh-widget-icon">🐛</div>
+            <div class="gh-widget-content">
+                <div class="gh-widget-label" data-i18n="ghIssuesLabel">Issues</div>
+                <div class="gh-widget-value" id="gh-issues-count">—</div>
+            </div>
+        </div>
+
+        <div class="gh-widget">
+            <div class="gh-widget-icon">📦</div>
+            <div class="gh-widget-content">
+                <div class="gh-widget-label" data-i18n="ghRepoLabel">Repo</div>
+                <div class="gh-widget-value repo-name" id="gh-repo-name">—</div>
+            </div>
+        </div>
+
+        <div class="gh-widget">
+            <div class="gh-widget-icon">🕐</div>
+            <div class="gh-widget-content">
+                <div class="gh-widget-label" data-i18n="ghUpdatedLabel">Updated</div>
+                <div class="gh-widget-value" id="gh-updated">—</div>
+            </div>
+        </div>
+
+        <a class="gh-link" id="gh-link" href="#" target="_blank" rel="noopener">
+            <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+                0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15
+                -.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51
+                -1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12
+                0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82
+                2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95
+                .29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8
+                c0-4.42-3.58-8-8-8z"/>
+            </svg>
+            <span data-i18n="ghViewRepo">Repoyu Gör</span>
+        </a>
+
+        <!-- Son Aramalar (LocalStorage) -->
+        <div class="recent-section" id="recent-section">
+            <div class="recent-title" data-i18n="recentTitle">Son Aramalar</div>
+            <div id="recent-list"></div>
+        </div>
+
+    </aside>
+
+    <!-- ═══════════ ANA İÇERİK ═══════════ -->
+    <main class="main-content">
+
+        <!-- Üst Kontrol Çubuğu -->
+        <div class="controls-bar">
+            <div class="app-logo">
+                <span class="logo-icon">🌤️</span>
+                <span class="logo-text">WeatherPlanner</span>
+            </div>
+            <div class="right-controls">
+                <div class="lang-toggle">
+                    <button class="lang-btn active" id="btn-tr" onclick="setLanguage('tr')">TR</button>
+                    <span class="lang-divider">|</span>
+                    <button class="lang-btn" id="btn-en" onclick="setLanguage('en')">EN</button>
+                </div>
+                <button class="theme-btn" id="theme-btn" onclick="toggleTheme()">
+                    <span id="theme-icon">🌙</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Arama Kutusu -->
+        <div class="search-section">
+            <div class="search-box">
+                <div class="input-wrapper">
+                    <input type="text" id="city-input" placeholder="Şehir adı... (Örn: Konya)" autocomplete="off">
+                    <div id="autocomplete-suggestions" class="autocomplete-suggestions hidden"></div>
+                </div>
+
+                <!-- API Durum Badge'i -->
+                <div class="api-badge" id="api-badge">
+                    <span class="api-dot" id="api-dot"></span>
+                    <span id="api-text">OpenWeatherMap API Bağlı</span>
+                </div>
+
+                <!-- Sesli Arama Butonu -->
+                <button class="mic-btn" id="mic-btn" onclick="startVoiceSearch()" title="Sesli Arama">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2.2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                        <line x1="12" y1="19" x2="12" y2="23"></line>
+                        <line x1="8" y1="23" x2="16" y2="23"></line>
+                    </svg>
+                </button>
+
+                <!-- GPS Butonu -->
+                <button class="gps-btn" id="gps-btn" onclick="getLocation()" title="Konumumu Kullan">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2.2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M12 2v3M12 19v3M2 12h3M19 12h3"></path>
+                        <circle cx="12" cy="12" r="8" stroke-dasharray="4 2" opacity="0.5"></circle>
+                    </svg>
+                </button>
+
+                <button class="search-btn" id="search-btn" data-i18n="searchBtn">Ara</button>
+            </div>
+        </div>
+
+        <!-- Yükleniyor -->
+        <div id="loading" class="loading-container hidden">
+            <div class="loading-spinner"></div>
+            <p data-i18n="loading">Yükleniyor...</p>
+        </div>
+
+        <!-- ─── HAVA DURUMU SONUÇLARI ─── -->
+        <div id="weather-result" class="weather-result hidden">
+
+            <!-- HERO: Şehir Fotoğrafı + Sıcaklık -->
+            <div class="hero-panel">
+                <div class="city-photo-bg" id="city-photo-bg"></div>
+                <div class="hero-overlay"></div>
+                <div class="hero-content">
+                    <div class="hero-left">
+                        <h3 id="city-name">—</h3>
+                        <p id="local-time" class="local-time"></p>
+                        <img id="weather-icon" src="" alt="" class="weather-icon">
+                        <p id="description" class="desc"></p>
+                    </div>
+                    <div class="hero-right">
+                        <div class="temp-box"><span id="temperature">--</span>°C</div>
+                        <p class="feels-like">
+                            <span data-i18n="feelsLike">Hissedilen</span>: <span id="feels-like">--</span>°C
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DETAY KARTLARI -->
+            <div class="details-grid">
+                <div class="detail-card">
+                    <div class="detail-icon">💨</div>
+                    <div class="detail-label" data-i18n="wind">Rüzgar</div>
+                    <div class="detail-value"><span id="wind">--</span> km/s</div>
+                </div>
+                <div class="detail-card">
+                    <div class="detail-icon">🧭</div>
+                    <div class="detail-label" data-i18n="windDir">Yön</div>
+                    <div class="detail-value" id="wind-dir">--</div>
+                </div>
+                <div class="detail-card">
+                    <div class="detail-icon">💧</div>
+                    <div class="detail-label" data-i18n="humidity">Nem</div>
+                    <div class="detail-value">%<span id="humidity">--</span></div>
+                </div>
+                <div class="detail-card">
+                    <div class="detail-icon">🌡️</div>
+                    <div class="detail-label" data-i18n="pressure">Basınç</div>
+                    <div class="detail-value"><span id="pressure">--</span> hPa</div>
+                </div>
+                <div class="detail-card">
+                    <div class="detail-icon">👁️</div>
+                    <div class="detail-label" data-i18n="visibility">Görüş</div>
+                    <div class="detail-value"><span id="visibility">--</span> km</div>
+                </div>
+                <div class="detail-card">
+                    <div class="detail-icon">☁️</div>
+                    <div class="detail-label" data-i18n="cloudiness">Bulutluluk</div>
+                    <div class="detail-value">%<span id="cloudiness">--</span></div>
+                </div>
+                <div class="detail-card">
+                    <div class="detail-icon">🌿</div>
+                    <div class="detail-label" data-i18n="airQuality">Hava Kalitesi</div>
+                    <div class="detail-value" id="aqi-value">--</div>
+                </div>
+                <div class="detail-card">
+                    <div class="detail-icon">☀️</div>
+                    <div class="detail-label" data-i18n="uvIndex">UV İndeksi</div>
+                    <div class="detail-value" id="uv-value">--</div>
+                </div>
+            </div>
+
+            <!-- GÜNEŞ ÇUBUĞU -->
+            <div class="sun-bar">
+                <div class="sun-item">
+                    <span>🌅</span>
+                    <span class="sun-label" data-i18n="sunrise">Gün Doğumu</span>
+                    <span class="sun-value" id="sunrise">--</span>
+                </div>
+                <div class="sun-progress-track">
+                    <div class="sun-progress-fill" id="sun-progress"></div>
+                    <div class="sun-indicator" id="sun-indicator">☀️</div>
+                </div>
+                <div class="sun-item">
+                    <span>🌇</span>
+                    <span class="sun-label" data-i18n="sunset">Gün Batımı</span>
+                    <span class="sun-value" id="sunset">--</span>
+                </div>
+            </div>
+
+            <!-- AI ÖNERİSİ -->
+            <div class="suggestion-box">
+                <div class="suggestion-header">
+                    <span class="ai-badge">🤖 AI</span>
+                    <h4 data-i18n="aiSuggestion">Akıllı Öneri</h4>
+                </div>
+                <p id="suggestion-text"></p>
+            </div>
+
+            <!-- SAATLİK TAHMİN -->
+            <div class="hourly-section">
+                <h4 class="hourly-title" data-i18n="hourlyTitle">24 Saatlik Sıcaklık Trendi</h4>
+                <div class="hourly-chart-container">
+                    <svg id="hourly-chart" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+                    <div id="hourly-chart-tooltip" class="chart-tooltip hidden"></div>
+                </div>
+            </div>
+
+            <!-- 5 GÜNLÜK TAHMİN -->
+            <div class="forecast-section">
+                <h4 class="forecast-title" data-i18n="forecastTitle">5 Günlük Tahmin</h4>
+                <div id="forecast-cards" class="forecast-cards"></div>
+            </div>
+
+            <!-- YAĞIŞ RADAR HARİTASI (5 Günlük Tahmin'in altında) -->
+            <div class="map-section">
+                <div class="map-section-header">
+                    <div class="map-section-left">
+                        <span class="map-section-icon">🗺️</span>
+                        <h4 class="map-section-title" data-i18n="mapTitle">Yağış Radar Haritası</h4>
+                    </div>
+                    <div class="map-live-badge">
+                        <span class="live-dot"></span>
+                        <span data-i18n="mapLive">Canlı</span>
+                    </div>
+                </div>
+                <div id="weather-map-container">
+                    <button class="map-fullscreen-btn" id="map-fullscreen-btn" title="Tam Ekran" onclick="toggleMapFullscreen()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+                        </svg>
+                    </button>
+                    <div class="map-layer-control">
+                        <button class="layer-btn active" data-layer="precipitation">
+                            <span>🌧️</span> <span data-i18n="layerPrecip">Yağış</span>
+                        </button>
+                        <button class="layer-btn" data-layer="clouds">
+                            <span>☁️</span> <span data-i18n="layerClouds">Bulut</span>
+                        </button>
+                        <button class="layer-btn" data-layer="wind">
+                            <span>💨</span> <span data-i18n="layerWind">Rüzgar</span>
+                        </button>
+                        <button class="layer-btn" data-layer="temp">
+                            <span>🌡️</span> <span data-i18n="layerTemp">Sıcaklık</span>
+                        </button>
+                    </div>
+                    <div id="weather-map"></div>
+                </div>
+            </div>
+
+        </div>
+
+        <p id="error-msg" class="error hidden">Şehir bulunamadı.</p>
+
+    </main>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
