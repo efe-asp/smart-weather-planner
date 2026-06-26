@@ -47,8 +47,6 @@ const T = {
         errorMsg:     "Şehir bulunamadı, lütfen tekrar deneyin.",
         gpsError:     "Konum alınamadı. Lütfen izin verdiğinizden emin olun.",
         gpsUnsupported: "Tarayıcınız konum servisini desteklemiyor.",
-        voiceUnsupported: "Tarayıcınız sesli aramayı desteklemiyor.",
-        voiceListening: "Dinleniyor...",
         apiConnected:  "OpenWeatherMap API Bağlı",
         apiError:      "API Bağlantı Hatası",
         ghBuildLabel: "Build Status",
@@ -110,8 +108,6 @@ const T = {
         errorMsg:     "City not found. Please try again.",
         gpsError:     "Could not get your location. Please allow access.",
         gpsUnsupported: "Your browser doesn't support geolocation.",
-        voiceUnsupported: "Your browser doesn't support speech recognition.",
-        voiceListening: "Listening...",
         apiConnected: "OpenWeatherMap API Connected",
         apiError:     "API Connection Error",
         ghBuildLabel: "Build Status",
@@ -165,7 +161,6 @@ let currentChartTab = 'temp'; // Aktif grafik sekmesi
 let lastForecastData = null;  // Son forecast verisi (sekme değiştirince lazım)
 let particleSystem = null;    // Canvas particle effect instance
 let lastAQIData = null;       // Son AQI verisi (modal için)
-let activeRecognition = null; // Ses tanıma referansı
 
 // ============================================================
 // BAŞLANGIÇ
@@ -360,98 +355,6 @@ function getLocation() {
     );
 }
 
-// ============================================================
-// SESLİ ARAMA (Web Speech API)
-// ============================================================
-function startVoiceSearch() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const t = T[currentLang];
-
-    if (!SpeechRecognition) {
-        showToast(t.voiceUnsupported, 'error');
-        return;
-    }
-
-    const micBtn = document.getElementById('mic-btn');
-    const input  = document.getElementById('city-input');
-
-    // Eğer zaten aktif olarak dinliyorsa durdur
-    if (micBtn.classList.contains('mic-active')) {
-        if (activeRecognition) {
-            try {
-                activeRecognition.abort();
-            } catch (e) {
-                console.warn(e);
-            }
-        }
-        micBtn.classList.remove('mic-active');
-        input.placeholder = T[currentLang].searchPlaceholder;
-        return;
-    }
-
-    // Yeni tanıma nesnesi başlat
-    activeRecognition = new SpeechRecognition();
-    activeRecognition.lang = currentLang === 'tr' ? 'tr-TR' : 'en-US';
-    activeRecognition.interimResults = false;
-    activeRecognition.maxAlternatives = 1;
-    activeRecognition.continuous = false;
-
-    activeRecognition.onstart = () => {
-        micBtn.classList.add('mic-active');
-        input.placeholder = t.voiceListening;
-        input.value = '';
-    };
-
-    activeRecognition.onresult = (event) => {
-        const spokenText = event.results[0][0].transcript;
-        if (spokenText) {
-            const cleanText = spokenText.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "").trim();
-            if (cleanText) {
-                input.value = cleanText;
-                closeSuggestions();
-                fetchWeather(cleanText);
-            }
-        }
-    };
-
-    activeRecognition.onerror = (e) => {
-        console.warn('Speech recognition error:', e.error);
-        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-            if (window.location.protocol === 'file:') {
-                showToast(currentLang === 'tr' 
-                    ? '🎤 Güvenlik kuralları gereği sesli arama yerel dosyalarda (file://) çalışmaz. Lütfen localhost kullanın veya siteyi yayınlayın.' 
-                    : '🎤 Due to browser security, voice search does not work on local files (file://). Please use localhost or deploy the site.', 
-                    'error'
-                );
-            } else {
-                showToast(currentLang === 'tr' 
-                    ? '🎤 Mikrofon izni reddedildi. Adres çubuğundaki kilit simgesine tıklayıp izin verin.' 
-                    : '🎤 Microphone permission denied. Click the lock icon in the address bar to allow.', 
-                    'error'
-                );
-            }
-        } else if (e.error === 'network') {
-            showToast(currentLang === 'tr' ? 'Ses tanıma için internet bağlantısı gerekli.' : 'Internet connection required for speech recognition.', 'error');
-        } else if (e.error === 'no-speech') {
-            showToast(currentLang === 'tr' ? 'Ses algılanamadı, lütfen tekrar deneyin.' : 'No speech detected, please try again.', 'info');
-        }
-    };
-
-    activeRecognition.onend = () => {
-        micBtn.classList.remove('mic-active');
-        input.placeholder = T[currentLang].searchPlaceholder;
-        activeRecognition = null;
-    };
-
-    try {
-        activeRecognition.start();
-    } catch (err) {
-        console.warn('Speech recognition start failed:', err);
-        micBtn.classList.remove('mic-active');
-        input.placeholder = T[currentLang].searchPlaceholder;
-        activeRecognition = null;
-    }
-}
 
 // ============================================================
 // TOAST BİLDİRİMİ GÖSTERME
