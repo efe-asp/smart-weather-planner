@@ -13,6 +13,9 @@
 </head>
 <body class="theme-dark weather-default">
 
+<!-- Canvas Particle System (dynamic weather effects) -->
+<canvas id="particle-canvas"></canvas>
+
 <div class="app-wrapper">
 
     <!-- ═══════════ SOL SIDEBAR ═══════════ -->
@@ -101,6 +104,15 @@
         <div class="recent-section" id="recent-section">
             <div class="recent-title" data-i18n="recentTitle">Son Aramalar</div>
             <div id="recent-list"></div>
+        </div>
+
+        <!-- ⭐ Favori Şehirler -->
+        <div class="favorites-section" id="favorites-section">
+            <div class="favorites-header">
+                <span class="favorites-title" data-i18n="favoritesTitle">Favoriler</span>
+                <span class="favorites-count" id="favorites-count">0</span>
+            </div>
+            <div id="favorites-list"></div>
         </div>
 
     </aside>
@@ -192,6 +204,13 @@
                         <p class="feels-like">
                             <span data-i18n="feelsLike">Hissedilen</span>: <span id="feels-like">--</span>°C
                         </p>
+                        <!-- ⭐ Favori Butonu (Hero içinde) -->
+                        <button class="fav-toggle-btn" id="fav-toggle-btn" onclick="toggleFavorite()" title="Favorilere Ekle">
+                            <svg id="fav-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                            </svg>
+                            <span id="fav-btn-text" data-i18n="addFav">Favori</span>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -228,10 +247,12 @@
                     <div class="detail-label" data-i18n="cloudiness">Bulutluluk</div>
                     <div class="detail-value">%<span id="cloudiness">--</span></div>
                 </div>
-                <div class="detail-card">
+                <!-- Hava Kalitesi - tıklanabilir, modal açar -->
+                <div class="detail-card aqi-card" id="aqi-card" onclick="openAQIPanel()">
                     <div class="detail-icon">🌿</div>
                     <div class="detail-label" data-i18n="airQuality">Hava Kalitesi</div>
                     <div class="detail-value" id="aqi-value">--</div>
+                    <div class="aqi-tap-hint" data-i18n="aqiTapHint">Detay için tıkla</div>
                 </div>
                 <div class="detail-card">
                     <div class="detail-icon">☀️</div>
@@ -267,9 +288,23 @@
                 <p id="suggestion-text"></p>
             </div>
 
-            <!-- SAATLİK TAHMİN -->
+            <!-- ⏱ SAATLİK SLIDER -->
+            <div class="hourly-slider-section">
+                <h4 class="hourly-slider-title" data-i18n="hourlySliderTitle">Saatlik Tahmin</h4>
+                <div class="hourly-slider-wrapper">
+                    <div id="hourly-slider" class="hourly-slider"></div>
+                </div>
+            </div>
+
+            <!-- 📊 GRAFİK SEKMELERİ (Sıcaklık / Rüzgar / Nem) -->
             <div class="hourly-section">
-                <h4 class="hourly-title" data-i18n="hourlyTitle">24 Saatlik Sıcaklık Trendi</h4>
+                <div class="chart-tabs-header">
+                    <div class="chart-tabs">
+                        <button class="chart-tab active" id="tab-temp" data-tab="temp" data-i18n="tabTemp" onclick="switchChartTab('temp')">🌡️ Sıcaklık</button>
+                        <button class="chart-tab" id="tab-wind" data-tab="wind" data-i18n="tabWind" onclick="switchChartTab('wind')">💨 Rüzgar</button>
+                        <button class="chart-tab" id="tab-humidity" data-tab="humidity" data-i18n="tabHumidity" onclick="switchChartTab('humidity')">💧 Nem</button>
+                    </div>
+                </div>
                 <div class="hourly-chart-container">
                     <svg id="hourly-chart" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
                     <div id="hourly-chart-tooltip" class="chart-tooltip hidden"></div>
@@ -282,7 +317,7 @@
                 <div id="forecast-cards" class="forecast-cards"></div>
             </div>
 
-            <!-- YAĞIŞ RADAR HARİTASI (5 Günlük Tahmin'in altında) -->
+            <!-- YAĞIŞ RADAR HARİTASI -->
             <div class="map-section">
                 <div class="map-section-header">
                     <div class="map-section-left">
@@ -323,6 +358,45 @@
         <p id="error-msg" class="error hidden">Şehir bulunamadı.</p>
 
     </main>
+</div>
+
+<!-- ═══════════ AQI SAĞLIK PANELİ MODAL ═══════════ -->
+<div class="aqi-modal-overlay" id="aqi-modal-overlay" onclick="closeAQIPanel()">
+    <div class="aqi-modal" onclick="event.stopPropagation()">
+        <button class="aqi-modal-close" onclick="closeAQIPanel()">✕</button>
+        <div class="aqi-modal-header">
+            <span class="aqi-modal-icon">🌿</span>
+            <div>
+                <h3 class="aqi-modal-title" data-i18n="aqiPanelTitle">Hava Kalitesi Raporu</h3>
+                <p class="aqi-modal-city" id="aqi-modal-city">—</p>
+            </div>
+        </div>
+
+        <!-- AQI Göstergesi -->
+        <div class="aqi-gauge-container">
+            <div class="aqi-gauge-bar">
+                <div class="aqi-gauge-fill" id="aqi-gauge-fill"></div>
+                <div class="aqi-gauge-pointer" id="aqi-gauge-pointer"></div>
+            </div>
+            <div class="aqi-gauge-labels">
+                <span>Mükemmel</span><span>İyi</span><span>Orta</span><span>Kötü</span><span>Çok Kötü</span>
+            </div>
+            <div class="aqi-gauge-index">
+                <span class="aqi-index-num" id="aqi-index-num">—</span>
+                <span class="aqi-index-label" id="aqi-index-label">—</span>
+            </div>
+        </div>
+
+        <!-- Kirletici Değerler -->
+        <div class="aqi-pollutants" id="aqi-pollutants">
+            <!-- JS ile doldurulur -->
+        </div>
+
+        <!-- Sağlık Tavsiyesi -->
+        <div class="aqi-health-advice" id="aqi-health-advice">
+            <!-- JS ile doldurulur -->
+        </div>
+    </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

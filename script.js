@@ -4,8 +4,8 @@
 const API_KEY = "3484d9a498e33eee5b69509f7bdf171b";
 
 const GITHUB_CONFIG = {
-    username: 'alsac',
-    repo: 'Hava-durumu-API',
+    username: 'efe-asp',
+    repo: 'smart-weather-planner',
 };
 
 // Harita tile URL'leri — tema bazlı
@@ -61,6 +61,15 @@ const T = {
         ghViewRepo:   "Repoyu Gör",
         recentTitle:  "Son Aramalar",
         recentEmpty:  "Henüz arama yok",
+        favoritesTitle: "Favoriler",
+        addFav:       "Favorilere Ekle",
+        removeFav:    "Favorilerden Çıkar",
+        aqiPanelTitle: "Hava Kalitesi Raporu",
+        aqiTapHint:   "Detay için tıkla",
+        hourlySliderTitle: "Saatlik Tahmin",
+        tabTemp:      "🌡️ Sıcaklık",
+        tabWind:      "💨 Rüzgar",
+        tabHumidity:  "💧 Nem",
         days: ["Paz","Pzt","Sal","Çar","Per","Cum","Cmt"],
         aqi: ["—","Mükemmel","İyi","Orta","Kötü","Çok Kötü"],
         uvLbl: { low:"Düşük", mod:"Orta", high:"Yüksek", vhigh:"Çok Yüksek" },
@@ -115,6 +124,15 @@ const T = {
         ghViewRepo:   "View Repo",
         recentTitle:  "Recent Searches",
         recentEmpty:  "No searches yet",
+        favoritesTitle: "Favorites",
+        addFav:       "Add to Favorites",
+        removeFav:    "Remove Favorite",
+        aqiPanelTitle: "Air Quality Report",
+        aqiTapHint:   "Tap for details",
+        hourlySliderTitle: "Hourly Forecast",
+        tabTemp:      "🌡️ Temperature",
+        tabWind:      "💨 Wind",
+        tabHumidity:  "💧 Humidity",
         days: ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"],
         aqi: ["—","Excellent","Good","Moderate","Poor","Very Poor"],
         uvLbl: { low:"Low", mod:"Moderate", high:"High", vhigh:"Very High" },
@@ -143,6 +161,10 @@ let currentMapLayer = 'precipitation'; // Aktif seçili katman
 let autocompleteTimeout = null;
 let activeSuggestionIndex = -1;
 let currentSuggestions = [];
+let currentChartTab = 'temp'; // Aktif grafik sekmesi
+let lastForecastData = null;  // Son forecast verisi (sekme değiştirince lazım)
+let particleSystem = null;    // Canvas particle effect instance
+let lastAQIData = null;       // Son AQI verisi (modal için)
 
 // ============================================================
 // BAŞLANGIÇ
@@ -154,6 +176,8 @@ document.addEventListener('DOMContentLoaded', () => {
     loadGitHubData();
     checkAPIStatus();
     renderRecentSearches();
+    renderFavorites();
+    initParticleSystem();
 });
 
 function setupEventListeners() {
@@ -337,43 +361,88 @@ function getLocation() {
 
 // ============================================================
 // SESLİ ARAMA (Web Speech API)
-// Kullanıcı mikrofon butonuna basar → ses tanıma başlar →
-// söylenen şehir adı otomatik olarak arama kutusuna yazılır
-// ve hava durumu sorgulanır.
-// Chrome ve Edge'de mükemmel çalışır, Firefox'ta desteklenmez.
 // ============================================================
 function startVoiceSearch() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const t = T[currentLang];
 
     if (!SpeechRecognition) {
-        alert(t.voiceUnsupported);
+        showToast(t.voiceUnsupported, 'error');
         return;
     }
 
+    const micBtn = document.getElementById('mic-btn');
+    const input  = document.getElementById('city-input');
+
+    // İkinci kez basılırsa durdur
+    if (micBtn.classList.contains('mic-active')) {
+        micBtn.classList.remove('mic-active');
+        input.placeholder = T[currentLang].searchPlaceholder;
+        return;
+    }
+
+    // Önce mikrofon iznini açıkça iste (file:// ve https:// her ikisinde çalışır)
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(stream => {
+                // İzin verildi — stream'i hemen durdur, sadece izni aldık
+                stream.getTracks().forEach(t => t.stop());
+                _startRecognition(SpeechRecognition, micBtn, input, t);
+            })
+            .catch(err => {
+                if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                    showToast('🎤 Mikrofon izni reddedildi. Tarayıcı adres çubuğundaki mikrofon simgesine tıklayarak izin ver.', 'error');
+                } else {
+                    // İzin API yoksa veya hata varsa direkt dene
+                    _startRecognition(SpeechRecognition, micBtn, input, t);
+                }
+            });
+    } else {
+        _startRecognition(SpeechRecognition, micBtn, input, t);
+    }
+}
+
+function _startRecognition(SpeechRecognition, micBtn, input, t) {
     const recognition = new SpeechRecognition();
     recognition.lang = currentLang === 'tr' ? 'tr-TR' : 'en-US';
     recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
+    recognition.maxAlternatives = 3;
     recognition.continuous = false;
 
-    const micBtn  = document.getElementById('mic-btn');
-    const input   = document.getElementById('city-input');
-
-    // Buton görsel durumu: dinleniyor
     micBtn.classList.add('mic-active');
     input.placeholder = t.voiceListening;
+    input.value = '';
 
-    recognition.start();
+    try {
+        recognition.start();
+    } catch (err) {
+        console.warn('Recognition start error:', err);
+        micBtn.classList.remove('mic-active');
+        input.placeholder = T[currentLang].searchPlaceholder;
+        showToast('Ses tanıma başlatılamadı. Sayfayı yenileyin.', 'error');
+        return;
+    }
 
     recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript.trim();
-        input.value = transcript;
-        fetchWeather(transcript);
+        let best = '', bestConf = 0;
+        for (let i = 0; i < event.results[0].length; i++) {
+            const r = event.results[0][i];
+            if (r.confidence >= bestConf) { best = r.transcript.trim(); bestConf = r.confidence; }
+        }
+        if (best) {
+            input.value = best;
+            closeSuggestions();
+            fetchWeather(best);
+        }
     };
 
     recognition.onerror = (e) => {
         console.warn('Speech recognition error:', e.error);
+        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+            showToast('🎤 Mikrofon izni reddedildi. Adres çubuğundaki kilit/mikrofon simgesine tıkla.', 'error');
+        } else if (e.error === 'network') {
+            showToast('Ses tanıma için internet bağlantısı gerekli.', 'error');
+        }
     };
 
     recognition.onend = () => {
@@ -505,9 +574,12 @@ async function fetchWeather(city) {
             ]);
             
             displayWeather(wData, aqiData, photoUrl);
+            lastAQIData = aqiData;
             if (fData) {
+                lastForecastData = fData;
                 displayForecast(fData);
-                renderHourlyChart(fData);
+                renderHourlySlider(fData);
+                renderHourlyChart(fData, currentChartTab);
             }
             addRecentSearch(countryObj.name);
             return;
@@ -529,9 +601,12 @@ async function fetchWeather(city) {
         ]);
 
         displayWeather(wData, aqiData, photoUrl);
+        lastAQIData = aqiData;
         if (fData) {
+            lastForecastData = fData;
             displayForecast(fData);
-            renderHourlyChart(fData);
+            renderHourlySlider(fData);
+            renderHourlyChart(fData, currentChartTab);
         }
         addRecentSearch(wData.name); // Başarılı aramayı kaydet
 
@@ -561,9 +636,12 @@ async function fetchWeatherByCoords(lat, lon) {
         ]);
 
         displayWeather(wData, aqiData, photoUrl);
+        lastAQIData = aqiData;
         if (fData) {
+            lastForecastData = fData;
             displayForecast(fData);
-            renderHourlyChart(fData);
+            renderHourlySlider(fData);
+            renderHourlyChart(fData, currentChartTab);
         }
         addRecentSearch(wData.name);
 
@@ -600,7 +678,7 @@ async function fetchCityPhoto(cityName) {
 // ============================================================
 async function loadGitHubData() {
     const { username, repo } = GITHUB_CONFIG;
-    document.getElementById('gh-link').href = `https://github.com/${username}/${repo}`;
+    document.getElementById('gh-link').href = 'https://github.com/efe-asp/smart-weather-planner';
 
     try {
         const [rRes, cRes] = await Promise.all([
@@ -709,6 +787,12 @@ function displayWeather(data, aqiData, photoUrl) {
     setTimeout(() => {
         initMap(coord.lat, coord.lon, data.isCountry ? data.countryInfo : null);
     }, 200);
+
+    // 11. Favori butonu durumunu güncelle
+    updateFavButton(name);
+
+    // 12. Particle system'i hava durumuna göre güncelle
+    if (particleSystem) particleSystem.setWeather(condition, isNight);
 }
 
 // ============================================================
@@ -1162,14 +1246,26 @@ async function loadCountryWeather(countryObj) {
 }
 
 // ============================================================
-// SAATLİK SICAKLIK TREND GRAFİĞİ (SVG)
+// GRAFİK SEKMESİ DEĞİŞTİRME
 // ============================================================
-function renderHourlyChart(fData) {
+function switchChartTab(tab) {
+    currentChartTab = tab;
+    document.querySelectorAll('.chart-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tab);
+    });
+    if (lastForecastData) {
+        renderHourlyChart(lastForecastData, tab);
+    }
+}
+
+// ============================================================
+// SAATLİK TAHMİN GRAFİĞİ (SVG) — Çoklu Sekme
+// ============================================================
+function renderHourlyChart(fData, tab = 'temp') {
     const svg = document.getElementById('hourly-chart');
     const tooltip = document.getElementById('hourly-chart-tooltip');
     if (!svg) return;
     
-    // Önceki grafiği temizle
     svg.innerHTML = '';
     
     if (!fData || !fData.list || fData.list.length === 0) {
@@ -1178,35 +1274,48 @@ function renderHourlyChart(fData) {
     }
     document.querySelector('.hourly-section').classList.remove('hidden');
 
-    // İlk 8 tahmini seç (24 saatlik süre)
     const points = fData.list.slice(0, 8);
-    const temps = points.map(p => Math.round(p.main.temp));
-    const minTemp = Math.min(...temps);
-    const maxTemp = Math.max(...temps);
-    const tempRange = maxTemp - minTemp || 1;
 
-    // SVG Boyutları (Basıklığı gidermek için yükseltildi)
+    // Sekmeye göre değer çekme ve renk seçimi
+    let values, unit, gradColors, labelFn;
+    if (tab === 'temp') {
+        values = points.map(p => Math.round(p.main.temp));
+        unit = '°C';
+        gradColors = { stroke1: '#ff7675', stroke2: '#a29bfe', stroke3: '#74b9ff', area: '#a29bfe' };
+        labelFn = (v) => `${v}°`;
+    } else if (tab === 'wind') {
+        values = points.map(p => Math.round((p.wind?.speed || 0) * 3.6));
+        unit = 'km/s';
+        gradColors = { stroke1: '#00cec9', stroke2: '#0984e3', stroke3: '#6c5ce7', area: '#0984e3' };
+        labelFn = (v) => `${v}`;
+    } else { // humidity
+        values = points.map(p => p.main.humidity);
+        unit = '%';
+        gradColors = { stroke1: '#55efc4', stroke2: '#00b894', stroke3: '#0984e3', area: '#00b894' };
+        labelFn = (v) => `${v}%`;
+    }
+
+    const minVal = Math.min(...values);
+    const maxVal = Math.max(...values);
+    const range = maxVal - minVal || 1;
+
     const width = 600;
     const height = 220;
     const paddingLeft = 35;
     const paddingRight = 35;
     const paddingTop = 30;
     const paddingBottom = 30;
-
     const chartWidth = width - paddingLeft - paddingRight;
     const chartHeight = height - paddingTop - paddingBottom;
 
-    // Koordinatları hesapla
     const coords = points.map((p, index) => {
         const x = paddingLeft + (index * (chartWidth / 7));
-        const t = Math.round(p.main.temp);
-        const y = height - paddingBottom - ((t - minTemp) / tempRange * chartHeight);
-        return { x, y, temp: t, time: fmtTime(p.dt, fData.city.timezone), item: p };
+        const v = values[index];
+        const y = height - paddingBottom - ((v - minVal) / range * chartHeight);
+        return { x, y, val: v, time: fmtTime(p.dt, fData.city.timezone), item: p };
     });
 
-    // Izgara çizgileri, saatler ve sıcaklıklar
     coords.forEach(pt => {
-        // Dikey kesikli çizgi
         const gridLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         gridLine.setAttribute('x1', pt.x);
         gridLine.setAttribute('y1', paddingTop - 10);
@@ -1215,7 +1324,6 @@ function renderHourlyChart(fData) {
         gridLine.setAttribute('class', 'chart-grid-line');
         svg.appendChild(gridLine);
 
-        // Saat Etiketi
         const timeTxt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         timeTxt.setAttribute('x', pt.x);
         timeTxt.setAttribute('y', height - 8);
@@ -1223,71 +1331,41 @@ function renderHourlyChart(fData) {
         timeTxt.textContent = pt.time;
         svg.appendChild(timeTxt);
         
-        // Derece Etiketi
-        const tempTxt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        tempTxt.setAttribute('x', pt.x);
-        tempTxt.setAttribute('y', pt.y - 12);
-        tempTxt.setAttribute('class', 'chart-temp-label');
-        tempTxt.textContent = `${pt.temp}°`;
-        svg.appendChild(tempTxt);
+        const valTxt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        valTxt.setAttribute('x', pt.x);
+        valTxt.setAttribute('y', pt.y - 12);
+        valTxt.setAttribute('class', 'chart-temp-label');
+        valTxt.textContent = labelFn(pt.val);
+        svg.appendChild(valTxt);
     });
 
-    // Degrade dolgu ve çizgi gradyanları tanımı
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
     
-    // 1. Sıcaklık Derecesine Göre Dikey Neon Çizgi Gradyanı (Sıcak -> Soğuk)
     const strokeGrad = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
     strokeGrad.setAttribute('id', 'stroke-gradient');
-    strokeGrad.setAttribute('x1', '0');
-    strokeGrad.setAttribute('y1', '0');
-    strokeGrad.setAttribute('x2', '0');
-    strokeGrad.setAttribute('y2', '1');
-    
-    const sStop1 = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
-    sStop1.setAttribute('offset', '0%');
-    sStop1.setAttribute('stop-color', '#ff7675'); // Sıcak (Kırmızı/Pembe)
-    
-    const sStop2 = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
-    sStop2.setAttribute('offset', '60%');
-    sStop2.setAttribute('stop-color', '#a29bfe'); // Ilık (Mor)
-    
-    const sStop3 = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
-    sStop3.setAttribute('offset', '100%');
-    sStop3.setAttribute('stop-color', '#74b9ff'); // Soğuk (Mavi)
-    
-    strokeGrad.appendChild(sStop1);
-    strokeGrad.appendChild(sStop2);
-    strokeGrad.appendChild(sStop3);
+    strokeGrad.setAttribute('x1', '0'); strokeGrad.setAttribute('y1', '0');
+    strokeGrad.setAttribute('x2', '0'); strokeGrad.setAttribute('y2', '1');
+    [['0%', gradColors.stroke1], ['55%', gradColors.stroke2], ['100%', gradColors.stroke3]].forEach(([off, col]) => {
+        const s = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
+        s.setAttribute('offset', off); s.setAttribute('stop-color', col);
+        strokeGrad.appendChild(s);
+    });
     defs.appendChild(strokeGrad);
 
-    // 2. Çizgi Altındaki Alan Gradyanı
     const areaGrad = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
     areaGrad.setAttribute('id', 'area-gradient');
-    areaGrad.setAttribute('x1', '0');
-    areaGrad.setAttribute('y1', '0');
-    areaGrad.setAttribute('x2', '0');
-    areaGrad.setAttribute('y2', '1');
-    
-    const aStop1 = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
-    aStop1.setAttribute('offset', '0%');
-    aStop1.setAttribute('stop-color', '#a29bfe');
-    aStop1.setAttribute('stop-opacity', '0.35');
-    
-    const aStop2 = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
-    aStop2.setAttribute('offset', '100%');
-    aStop2.setAttribute('stop-color', '#a29bfe');
-    aStop2.setAttribute('stop-opacity', '0');
-    
-    areaGrad.appendChild(aStop1);
-    areaGrad.appendChild(aStop2);
+    areaGrad.setAttribute('x1', '0'); areaGrad.setAttribute('y1', '0');
+    areaGrad.setAttribute('x2', '0'); areaGrad.setAttribute('y2', '1');
+    [[areaGrad, '0%', gradColors.area, '0.38'], [areaGrad, '100%', gradColors.area, '0']].forEach(([el, off, col, op]) => {
+        const s = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
+        s.setAttribute('offset', off); s.setAttribute('stop-color', col); s.setAttribute('stop-opacity', op);
+        el.appendChild(s);
+    });
     defs.appendChild(areaGrad);
-    
     svg.appendChild(defs);
 
-    // Çizgi ve Alan Yolu (Bezier)
     let pathD = '';
     let areaD = `M ${coords[0].x} ${height - paddingBottom}`;
-
     coords.forEach((pt, idx) => {
         if (idx === 0) {
             pathD += `M ${pt.x} ${pt.y}`;
@@ -1295,60 +1373,40 @@ function renderHourlyChart(fData) {
         } else {
             const prev = coords[idx - 1];
             const cpX1 = prev.x + (pt.x - prev.x) / 2;
-            const cpY1 = prev.y;
-            const cpX2 = prev.x + (pt.x - prev.x) / 2;
-            const cpY2 = pt.y;
-            pathD += ` C ${cpX1} ${cpY1}, ${cpX2} ${cpY2}, ${pt.x} ${pt.y}`;
-            areaD += ` C ${cpX1} ${cpY1}, ${cpX2} ${cpY2}, ${pt.x} ${pt.y}`;
+            pathD += ` C ${cpX1} ${prev.y}, ${cpX1} ${pt.y}, ${pt.x} ${pt.y}`;
+            areaD += ` C ${cpX1} ${prev.y}, ${cpX1} ${pt.y}, ${pt.x} ${pt.y}`;
         }
     });
-
     areaD += ` L ${coords[coords.length - 1].x} ${height - paddingBottom} Z`;
 
-    // Alanı çiz
     const areaPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    areaPath.setAttribute('d', areaD);
-    areaPath.setAttribute('class', 'chart-area');
+    areaPath.setAttribute('d', areaD); areaPath.setAttribute('class', 'chart-area');
     svg.appendChild(areaPath);
 
-    // Çizgiyi çiz
     const linePath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    linePath.setAttribute('d', pathD);
-    linePath.setAttribute('class', 'chart-line');
+    linePath.setAttribute('d', pathD); linePath.setAttribute('class', 'chart-line');
     svg.appendChild(linePath);
 
-    // Noktaları ekle ve etkileşim ata
     coords.forEach(pt => {
         const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        circle.setAttribute('cx', pt.x);
-        circle.setAttribute('cy', pt.y);
-        circle.setAttribute('r', '4.5');
-        circle.setAttribute('class', 'chart-point');
+        circle.setAttribute('cx', pt.x); circle.setAttribute('cy', pt.y);
+        circle.setAttribute('r', '4.5'); circle.setAttribute('class', 'chart-point');
         
         circle.addEventListener('mouseenter', () => {
             const rect = svg.getBoundingClientRect();
-            const ptX = (pt.x / width) * rect.width;
-            const ptY = (pt.y / height) * rect.height;
-            
-            tooltip.style.left = `${ptX}px`;
-            tooltip.style.top = `${ptY}px`;
-            
+            tooltip.style.left = `${(pt.x / width) * rect.width}px`;
+            tooltip.style.top = `${(pt.y / height) * rect.height}px`;
             const desc = pt.item.weather[0].description;
             const humidity = pt.item.main.humidity;
             const wind = Math.round(pt.item.wind.speed * 3.6);
-            
             tooltip.innerHTML = `
-                <div style="font-weight:700;margin-bottom:3px;">${pt.time} - ${pt.temp}°C</div>
+                <div style="font-weight:700;margin-bottom:3px;">${pt.time} — ${pt.val}${unit}</div>
                 <div style="text-transform:capitalize;opacity:0.9;">${desc}</div>
                 <div style="font-size:10px;opacity:0.75;margin-top:2px;">💧 %${humidity} | 💨 ${wind} km/s</div>
             `;
             tooltip.classList.remove('hidden');
         });
-
-        circle.addEventListener('mouseleave', () => {
-            tooltip.classList.add('hidden');
-        });
-        
+        circle.addEventListener('mouseleave', () => tooltip.classList.add('hidden'));
         svg.appendChild(circle);
     });
 }
@@ -1459,4 +1517,409 @@ function updateActiveSuggestion(elements) {
             el.scrollIntoView({ block: 'nearest' });
         }
     });
+}
+
+// ============================================================
+// ⭐ FAVORİ ŞEHİRLER SİSTEMİ (LocalStorage)
+// ============================================================
+const MAX_FAVORITES = 8;
+
+function getFavorites() {
+    try { return JSON.parse(localStorage.getItem('wp_favorites')) || []; }
+    catch { return []; }
+}
+
+function saveFavorites(favs) {
+    localStorage.setItem('wp_favorites', JSON.stringify(favs));
+}
+
+function toggleFavorite() {
+    if (!lastWeatherData) return;
+    const cityName = document.getElementById('city-name').textContent;
+    let favs = getFavorites();
+    const idx = favs.findIndex(f => f.name === cityName);
+    if (idx > -1) {
+        favs.splice(idx, 1);
+    } else {
+        if (favs.length >= MAX_FAVORITES) favs.pop();
+        const { coord, main, weather } = lastWeatherData;
+        favs.unshift({
+            name: cityName,
+            lat: coord.lat,
+            lon: coord.lon,
+            temp: Math.round(main.temp),
+            icon: weather[0].icon,
+            desc: weather[0].description
+        });
+    }
+    saveFavorites(favs);
+    updateFavButton(cityName);
+    renderFavorites();
+}
+
+function updateFavButton(cityName) {
+    const btn = document.getElementById('fav-toggle-btn');
+    const icon = document.getElementById('fav-icon');
+    const text = document.getElementById('fav-btn-text');
+    if (!btn || !lastWeatherData) return;
+    const favs = getFavorites();
+    const isFav = favs.some(f => f.name === cityName || f.name === (cityName + ', ' + lastWeatherData.sys?.country));
+    btn.classList.toggle('is-fav', isFav);
+    if (icon) {
+        icon.setAttribute('fill', isFav ? 'currentColor' : 'none');
+    }
+    if (text) {
+        text.textContent = isFav ? T[currentLang].removeFav : T[currentLang].addFav;
+    }
+}
+
+function renderFavorites() {
+    const section = document.getElementById('favorites-section');
+    const list = document.getElementById('favorites-list');
+    const countEl = document.getElementById('favorites-count');
+    if (!section || !list) return;
+
+    const favs = getFavorites();
+    if (countEl) countEl.textContent = favs.length;
+
+    if (favs.length === 0) {
+        list.innerHTML = `<p class="fav-empty" data-i18n="recentEmpty">${T[currentLang].recentEmpty}</p>`;
+        return;
+    }
+
+    list.innerHTML = favs.map(fav => `
+        <div class="fav-item" onclick="fetchWeatherFromFav(${fav.lat}, ${fav.lon}, '${fav.name.replace(/'/g, "\\'")}')">
+            <div class="fav-item-left">
+                <img src="https://openweathermap.org/img/wn/${fav.icon}.png" width="24" height="24" alt="">
+                <div class="fav-item-info">
+                    <span class="fav-item-name">${fav.name}</span>
+                    <span class="fav-item-desc">${fav.desc}</span>
+                </div>
+            </div>
+            <span class="fav-item-temp">${fav.temp}°</span>
+        </div>
+    `).join('');
+}
+
+function fetchWeatherFromFav(lat, lon, name) {
+    document.getElementById('city-input').value = name;
+    fetchWeatherByCoords(lat, lon);
+}
+
+// ============================================================
+// ⏱ SAATLİK TAHMIN SLIDER
+// ============================================================
+function renderHourlySlider(fData) {
+    const slider = document.getElementById('hourly-slider');
+    if (!slider || !fData || !fData.list) return;
+
+    const points = fData.list.slice(0, 12); // 36 saatlik
+    const tzOff = fData.city.timezone;
+
+    slider.innerHTML = points.map(p => {
+        const time = fmtTime(p.dt, tzOff);
+        const temp = Math.round(p.main.temp);
+        const icon = p.weather[0].icon;
+        const desc = p.weather[0].description;
+        const wind = Math.round((p.wind?.speed || 0) * 3.6);
+        const humidity = p.main.humidity;
+        const pop = p.pop ? Math.round(p.pop * 100) : 0; // Yağış ihtimali
+
+        return `
+            <div class="hourly-card">
+                <div class="hourly-card-time">${time}</div>
+                <img class="hourly-card-icon" src="https://openweathermap.org/img/wn/${icon}@2x.png" width="48" height="48" alt="${desc}">
+                <div class="hourly-card-temp">${temp}°C</div>
+                <div class="hourly-card-desc">${desc}</div>
+                <div class="hourly-card-details">
+                    <span>💧 ${humidity}%</span>
+                    <span>💨 ${wind} km/s</span>
+                    ${pop > 0 ? `<span>🌧️ ${pop}%</span>` : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// ============================================================
+// 🌿 HAVA KALİTESİ SAĞLIK PANELİ MODAL
+// ============================================================
+function openAQIPanel() {
+    const overlay = document.getElementById('aqi-modal-overlay');
+    const cityName = document.getElementById('city-name')?.textContent || '—';
+    document.getElementById('aqi-modal-city').textContent = cityName;
+
+    if (!lastAQIData || !lastAQIData.list || !lastAQIData.list[0]) {
+        document.getElementById('aqi-pollutants').innerHTML = '<p style="opacity:0.6;">Veri bulunamadı.</p>';
+        overlay.classList.add('open');
+        return;
+    }
+
+    const data = lastAQIData.list[0];
+    const aqi = data.main.aqi;
+    const comp = data.components;
+
+    // AQI Göstergesi
+    const aqiLabels = ['—', 'Mükemmel', 'İyi', 'Orta', 'Kötü', 'Çok Kötü'];
+    const aqiColors = ['', '#00b894', '#55efc4', '#fdcb6e', '#e17055', '#d63031'];
+    document.getElementById('aqi-index-num').textContent = aqi;
+    document.getElementById('aqi-index-label').textContent = T[currentLang].aqi[aqi] || aqiLabels[aqi];
+    document.getElementById('aqi-index-label').style.color = aqiColors[aqi];
+
+    const pointer = document.getElementById('aqi-gauge-pointer');
+    if (pointer) pointer.style.left = `${((aqi - 1) / 4) * 100}%`;
+
+    const fill = document.getElementById('aqi-gauge-fill');
+    if (fill) {
+        fill.style.width = `${((aqi - 1) / 4) * 100}%`;
+        fill.style.background = `linear-gradient(90deg, #00b894, ${aqiColors[aqi]})`;
+    }
+
+    // Kirletici değerler
+    const pollutants = [
+        { key: 'pm2_5',  label: 'PM2.5',  unit: 'μg/m³', safe: 25 },
+        { key: 'pm10',   label: 'PM10',   unit: 'μg/m³', safe: 50 },
+        { key: 'no2',    label: 'NO₂',    unit: 'μg/m³', safe: 40 },
+        { key: 'o3',     label: 'O₃',     unit: 'μg/m³', safe: 100 },
+        { key: 'co',     label: 'CO',     unit: 'μg/m³', safe: 4000 },
+        { key: 'so2',    label: 'SO₂',    unit: 'μg/m³', safe: 20 },
+        { key: 'nh3',    label: 'NH₃',    unit: 'μg/m³', safe: 200 },
+        { key: 'no',     label: 'NO',     unit: 'μg/m³', safe: 40 },
+    ];
+
+    document.getElementById('aqi-pollutants').innerHTML = `
+        <div class="pollutants-grid">
+            ${pollutants.map(p => {
+                const val = comp[p.key] ?? null;
+                if (val === null) return '';
+                const pct = Math.min((val / p.safe) * 100, 100);
+                const barColor = pct < 50 ? '#00b894' : pct < 80 ? '#fdcb6e' : '#e17055';
+                return `
+                    <div class="pollutant-card">
+                        <div class="pollutant-name">${p.label}</div>
+                        <div class="pollutant-value">${val.toFixed(1)} <span class="pollutant-unit">${p.unit}</span></div>
+                        <div class="pollutant-bar-bg">
+                            <div class="pollutant-bar" style="width:${pct}%;background:${barColor};"></div>
+                        </div>
+                        <div class="pollutant-safe">Güvenli: <${p.safe} ${p.unit}</div>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+
+    // Sağlık tavsiyesi
+    const adviceMap = {
+        1: { icon: '😊', title: 'Hava Kalitesi Mükemmel', text: 'Hava temiz ve taze. Tüm açık hava aktiviteleri için ideal. Dışarıda vakit geçirmekten çekinmeyin!', color: '#00b894' },
+        2: { icon: '🙂', title: 'Hava Kalitesi İyi',      text: 'Hava kalitesi genel olarak kabul edilebilir. Hassas kişiler uzun süreli yoğun egzersizden kaçınabilir.', color: '#55efc4' },
+        3: { icon: '😐', title: 'Orta Düzey Hava Kalitesi', text: 'Hassas gruplar (çocuklar, yaşlılar, astımlılar) uzun süreli dış mekan aktivitelerini sınırlamalı.', color: '#fdcb6e' },
+        4: { icon: '😷', title: 'Kötü Hava Kalitesi',     text: 'Herkes uzun ve yoğun dış mekan egzersizlerini azaltmalı. Hassas gruplar dışarı çıkmaktan kaçınmalı.', color: '#e17055' },
+        5: { icon: '🚨', title: 'Çok Kötü Hava Kalitesi', text: 'Herkese iç mekanda kalması önerilir. Mümkünse N95 maske kullanın. Pencere ve kapıları kapalı tutun.', color: '#d63031' },
+    };
+    const advice = adviceMap[aqi] || adviceMap[3];
+    document.getElementById('aqi-health-advice').innerHTML = `
+        <div class="health-advice-card" style="border-color:${advice.color}20;background:${advice.color}10;">
+            <div class="advice-icon">${advice.icon}</div>
+            <div class="advice-content">
+                <div class="advice-title" style="color:${advice.color};">${advice.title}</div>
+                <div class="advice-text">${advice.text}</div>
+            </div>
+        </div>
+    `;
+
+    overlay.classList.add('open');
+}
+
+function closeAQIPanel() {
+    document.getElementById('aqi-modal-overlay')?.classList.remove('open');
+}
+
+// ============================================================
+// 🎆 CANVAS PARTİKEL SİSTEMİ (Dinamik Hava Efektleri)
+// ============================================================
+function initParticleSystem() {
+    const canvas = document.getElementById('particle-canvas');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    let particles = [];
+    let animFrame = null;
+    let currentWeather = null;
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    class Particle {
+        constructor(type) {
+            this.type = type;
+            this.reset();
+        }
+
+        reset() {
+            this.x = Math.random() * canvas.width;
+            this.y = -10;
+            this.opacity = Math.random() * 0.6 + 0.1;
+
+            switch (this.type) {
+                case 'rain':
+                    this.w = Math.random() * 1.5 + 0.5;
+                    this.h = Math.random() * 18 + 10;
+                    this.speedX = Math.random() * 1 - 0.3;
+                    this.speedY = Math.random() * 8 + 10;
+                    this.color = `rgba(180,215,255,${this.opacity})`;
+                    break;
+                case 'snow':
+                    this.radius = Math.random() * 4 + 1;
+                    this.speedX = Math.sin(Math.random() * Math.PI * 2) * 0.8;
+                    this.speedY = Math.random() * 1.5 + 0.5;
+                    this.drift = Math.random() * 2 - 1;
+                    this.driftSpeed = Math.random() * 0.02;
+                    this.driftAngle = Math.random() * Math.PI * 2;
+                    this.color = `rgba(220,235,255,${this.opacity + 0.2})`;
+                    break;
+                case 'star':
+                    this.x = Math.random() * canvas.width;
+                    this.y = Math.random() * canvas.height * 0.6;
+                    this.radius = Math.random() * 1.8 + 0.3;
+                    this.twinkle = Math.random() * Math.PI * 2;
+                    this.twinkleSpeed = Math.random() * 0.04 + 0.01;
+                    this.color = `rgba(255,255,255,${this.opacity})`;
+                    this.speedY = 0;
+                    break;
+                case 'fog':
+                    this.x = Math.random() * canvas.width;
+                    this.y = Math.random() * canvas.height;
+                    this.radius = Math.random() * 80 + 40;
+                    this.speedX = Math.random() * 0.3 + 0.05;
+                    this.speedY = 0;
+                    this.color = `rgba(200,210,220,${Math.random() * 0.04 + 0.01})`;
+                    break;
+                case 'spark':
+                    this.x = Math.random() * canvas.width;
+                    this.y = Math.random() * canvas.height * 0.5;
+                    this.radius = Math.random() * 2 + 0.5;
+                    this.speedX = (Math.random() - 0.5) * 0.4;
+                    this.speedY = -Math.random() * 0.5 - 0.1;
+                    this.life = Math.random();
+                    this.decay = Math.random() * 0.003 + 0.001;
+                    this.color = `rgba(255,200,80,${this.opacity})`;
+                    break;
+            }
+        }
+
+        update() {
+            switch (this.type) {
+                case 'rain':
+                    this.x += this.speedX;
+                    this.y += this.speedY;
+                    if (this.y > canvas.height + 10) this.reset();
+                    break;
+                case 'snow':
+                    this.driftAngle += this.driftSpeed;
+                    this.x += Math.sin(this.driftAngle) * this.drift + this.speedX;
+                    this.y += this.speedY;
+                    if (this.y > canvas.height + 10) this.reset();
+                    break;
+                case 'star':
+                    this.twinkle += this.twinkleSpeed;
+                    break;
+                case 'fog':
+                    this.x += this.speedX;
+                    if (this.x > canvas.width + this.radius) this.x = -this.radius;
+                    break;
+                case 'spark':
+                    this.x += this.speedX;
+                    this.y += this.speedY;
+                    this.life -= this.decay;
+                    if (this.life <= 0) this.reset();
+                    break;
+            }
+        }
+
+        draw(ctx) {
+            ctx.save();
+            switch (this.type) {
+                case 'rain':
+                    ctx.fillStyle = this.color;
+                    ctx.beginPath();
+                    ctx.roundRect(this.x, this.y, this.w, this.h, 1);
+                    ctx.fill();
+                    break;
+                case 'snow':
+                    ctx.fillStyle = this.color;
+                    ctx.shadowColor = 'rgba(200,230,255,0.8)';
+                    ctx.shadowBlur = 6;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                case 'star': {
+                    const alpha = (Math.sin(this.twinkle) + 1) / 2 * this.opacity + 0.05;
+                    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+                    ctx.shadowColor = 'rgba(200,220,255,0.8)';
+                    ctx.shadowBlur = 4;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                }
+                case 'fog':
+                    ctx.fillStyle = this.color;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                case 'spark': {
+                    const a = this.life * this.opacity;
+                    ctx.fillStyle = `rgba(255,220,100,${a})`;
+                    ctx.shadowColor = 'rgba(255,180,0,0.6)';
+                    ctx.shadowBlur = 8;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius * this.life, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                }
+            }
+            ctx.restore();
+        }
+    }
+
+    function buildParticles(weather, isNight) {
+        particles = [];
+        if (weather === 'Rain' || weather === 'Drizzle') {
+            for (let i = 0; i < 120; i++) particles.push(new Particle('rain'));
+        } else if (weather === 'Thunderstorm') {
+            for (let i = 0; i < 160; i++) particles.push(new Particle('rain'));
+            for (let i = 0; i < 20; i++) particles.push(new Particle('spark'));
+        } else if (weather === 'Snow') {
+            for (let i = 0; i < 80; i++) particles.push(new Particle('snow'));
+        } else if (['Mist', 'Fog', 'Haze', 'Smoke'].includes(weather)) {
+            for (let i = 0; i < 18; i++) particles.push(new Particle('fog'));
+        } else if (weather === 'Clear' && isNight) {
+            for (let i = 0; i < 120; i++) particles.push(new Particle('star'));
+        } else {
+            // Güneşli veya varsayılan — temiz
+            particles = [];
+        }
+    }
+
+    function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        particles.forEach(p => { p.update(); p.draw(ctx); });
+        animFrame = requestAnimationFrame(animate);
+    }
+
+    if (animFrame) cancelAnimationFrame(animFrame);
+    animate();
+
+    particleSystem = {
+        setWeather(condition, isNight) {
+            currentWeather = condition;
+            buildParticles(condition, isNight);
+        }
+    };
 }
